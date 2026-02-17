@@ -8,7 +8,8 @@
 const CONFIG = {
   // ▼▼▼ ここから書き換えエリア ▼▼▼
   MASTER_SS_ID: '1LU6pAxEHlYDI40pIBNa4DQWt8xvSd94BBtbL9Mfpy1c',
-  STORAGE_FOLDER_ID: '1ixAqyqy7H_QwjVqgCfrjVEoLgQLyH8Zh'
+  STORAGE_FOLDER_ID: '1ixAqyqy7H_QwjVqgCfrjVEoLgQLyH8Zh',
+  TEACHER_PASSWORD: 'admin' // 先生用パスワード (変更してください)
   // ▲▲▲ ここまで書き換えエリア ▲▲▲
 };
 
@@ -74,8 +75,12 @@ function setupAdmin() {
     // 1. Submissions Sheet
     const sheet = ss.getSheets()[0];
     sheet.setName('submissions');
-    // ヘッダー定義更新: thumbnailFileIdを追加
-    const headers = ['timestamp', 'userId', 'questId', 'slideId', 'slideUrl', 'title', 'likes', 'deletedAt', 'thumbnailFileId'];
+    // ヘッダー定義更新: Gamification columns added
+    // validated: 'approvals', 'reviewedBy' (JSON), 'status' ('pending'|'approved'|'rejected')
+    const headers = [
+      'timestamp', 'userId', 'questId', 'slideId', 'slideUrl', 'title', 'likes', 'deletedAt', 'thumbnailFileId',
+      'approvals', 'reviewedBy', 'status' 
+    ];
     sheet.appendRow(headers);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, headers.length).setBackground('#fff2cc').setFontWeight('bold');
@@ -87,6 +92,14 @@ function setupAdmin() {
     questSheet.setFrozenRows(1);
     questSheet.getRange(1, 1, 1, questHeaders.length).setBackground('#d9ead3').setFontWeight('bold');
 
+    // 3. Users Sheet (New for Gamification)
+    const usersSheet = ss.insertSheet('users');
+    // xp: 経験値, level: レベル, clearedQuests: クリア済みクエストID(JSON), lastReviewDate: 最終評価日, dailyReviewCount: 本日の評価回数
+    const userHeaders = ['userId', 'xp', 'level', 'clearedQuests', 'lastReviewDate', 'dailyReviewCount'];
+    usersSheet.appendRow(userHeaders);
+    usersSheet.setFrozenRows(1);
+    usersSheet.getRange(1, 1, 1, userHeaders.length).setBackground('#c9daf8').setFontWeight('bold');
+
     // コピー用コード生成
     const newConfigCode = `const CONFIG = {
   // ▼▼▼ ここから書き換えエリア ▼▼▼
@@ -96,7 +109,7 @@ function setupAdmin() {
 };`;
 
     const htmlOutput = HtmlService.createHtmlOutput(`
-      <p style="font-family:sans-serif">セットアップ完了！以下のコードをコピーして、<b>コード.gsの先頭に上書き</b>してください。</p>
+      <p style="font-family:sans-serif">【v2.5アップデート】<br>セットアップ完了！以下のコードをコピーして、<b>コード.gsの先頭に上書き</b>してください。<br><small>※古いスプレッドシートのデータは移行されません。必要手動でコピーしてください。</small></p>
       <textarea style="width:100%; height:100px; font-family:monospace; border:2px solid #f1c40f; padding:5px;">${newConfigCode}</textarea>
       <button onclick="google.script.host.close()" style="margin-top:10px; padding:5px 15px;">閉じる</button>
     `).setWidth(400).setHeight(300);
@@ -113,7 +126,10 @@ function setupAdmin() {
 // ------------------------------------------
 
 // 管理者用: JSONテキストを受け取ってクエストを一括登録
-function saveQuestData(jsonString) {
+function saveQuestData(jsonString, password) {
+  if (password !== getTeacherPassword()) {
+     throw new Error('パスワードが違います');
+  }
   if (!CONFIG.MASTER_SS_ID) throw new Error('管理者設定が未完了です');
   
   try {
@@ -154,7 +170,6 @@ function saveQuestData(jsonString) {
   }
 }
 
-// ユーザー用: クエスト一覧取得
 // ユーザー用: クエスト一覧取得
 // ユーザー用: クエスト一覧取得
 function getQuestData() {
@@ -246,6 +261,12 @@ function submitSlide(questId, questTitle) {
     const slideId = presentation.getId();
     const userEmail = Session.getActiveUser().getEmail();
     
+    // Check clearance status
+    const profile = getUserProfile(); // From gamification.gs
+    if (profile && profile.clearedQuests.includes(questId)) {
+      throw new Error('このクエストは既にクリア済みです！');
+    }
+
     // コピー作成
     const sourceFile = DriveApp.getFileById(slideId);
     const targetFolder = DriveApp.getFolderById(CONFIG.STORAGE_FOLDER_ID);
@@ -298,7 +319,7 @@ function submitSlide(questId, questTitle) {
       questId,
       newSlideId,
       embedUrl,
-      presentation.getName(),
+      questTitle, // Use Quest Title instead of presentation.getName()
       0, 
       "",
       thumbFileId // 新規カラム
@@ -315,10 +336,7 @@ function submitSlide(questId, questTitle) {
 // ==========================================
 // 🖼️ ギャラリー取得
 // ==========================================
-// ==========================================
-// 🖼️ ギャラリー取得
-// ==========================================
-function getGalleryData() {
+function getGalleryData(filterType) {
   if (!CONFIG.MASTER_SS_ID) {
     console.warn("MASTER_SS_ID not set");
     return [];
@@ -344,6 +362,9 @@ function getGalleryData() {
     // ヘッダー除去
     data.shift(); 
     
+    // Current User Email
+    const currentUserEmail = Session.getActiveUser().getEmail();
+
     // インメモリでオブジェクト化（行番号を保持するため）
     // 行番号は 2行目から始まるので index + 2
     const allRows = data.map((row, index) => {
@@ -351,48 +372,63 @@ function getGalleryData() {
       const thumbId = row[8]; // I列 (thumbnailFileId)
       if (thumbId) {
         // Google Drive image direct link (New format)
-        // Old: https://drive.google.com/uc?export=view&id=...
-        // New: https://lh3.googleusercontent.com/d/...
         thumbUrl = `https://lh3.googleusercontent.com/d/${thumbId}`;
       }
+      
+      const submitterAsync = row[1]; // B列 userId
+      const reviewedByJson = row[10] || "[]";
+      let reviewedBy = [];
+      try { reviewedBy = JSON.parse(reviewedByJson); } catch (e) {}
 
       return {
         rowIndex: index + 2, // シート上の行番号
         timestamp: row[0],
-        userId: row[1],
+        userId: submitterAsync,
         questId: row[2],
         slideId: row[3],
         embedUrl: row[4],
         title: row[5],
         likes: row[6],
         deletedAt: row[7],
-        thumbnailUrl: thumbUrl
+        thumbnailUrl: thumbUrl,
+        approvals: row[9] || 0, // J列
+        reviewedBy: row[10] || "[]", // K列 (JSON string)
+        status: row[11] || "pending", // L列
+        isMine: (submitterAsync === currentUserEmail),
+        hasReviewed: reviewedBy.includes(currentUserEmail)
       };
     });
 
     // フィルタリング（削除されていないもの）
-    // deletedAt が空、null、undefined、または 0 ("0"含む) の場合に表示
-    const activeRows = allRows.filter(item => {
+    let activeRows = allRows.filter(item => {
       const d = item.deletedAt;
       // 緩い判定で 0 や "0" も許可
       return !d || d == 0 || d === ""; 
     });
 
-    console.log(`Initial Rows: ${allRows.length} -> Active: ${activeRows.length}`);
+    // Apply Custom Filters
+    if (filterType === 'mine') {
+      activeRows = activeRows.filter(item => item.isMine);
+    } else if (filterType === 'unreviewed') {
+      // Unreviewed means: Not approved yet AND I haven't reviewed it yet AND it's not mine
+      activeRows = activeRows.filter(item => 
+        item.status !== 'approved' && 
+        !item.hasReviewed && 
+        !item.isMine
+      );
+    }
 
-    // 最新順にして20件取得
+    console.log(`Initial Rows: ${allRows.length} -> Active: ${activeRows.length} (Filter: ${filterType})`);
+
+    // 最新順にして20件取得 (mineの場合はもっと多くてもいいかも？一旦20)
     const recentItems = activeRows.reverse().slice(0, 20);
     
-    // Explicitly stringify to ensure safe transport across google.script.run
-    // This handles Date objects and other quirks reliably
     const jsonResponse = JSON.stringify(recentItems);
-    console.log(`Returning JSON: ${jsonResponse}`); // Log the actual return value
-
     return jsonResponse;
 
   } catch (e) {
     console.error("getGalleryData Fatal Error:", e);
-    return "[]"; // Return empty array string on error
+    return "[]"; 
   }
 }
 // findRowIndex function removed as it is no longer needed

@@ -53,34 +53,102 @@
       </div>
     `;
 
-    runGoogleScript('getQuestData', [], function (quests) {
-      if (!quests || quests.length === 0) {
-        container.innerHTML = `
-          <div class="alert alert-warning text-center" role="alert">
-            クエストが見つかりません。<br>先生に確認してください。
-          </div>
-        `;
-        return;
-      }
+    // Parallel Fetch: Quests and User Profile
+    // Using Promise.all pattern with google.script.run is hard, so fetch profile first then quests
+    runGoogleScript('getUserProfile', [], function (profile) {
+      console.log("Profile:", profile);
+      // Update User Info Header (if element exists)
+      updateHeaderProfile(profile);
 
-      var html = '';
-      quests.forEach(function (q) {
-        html += '<div class="card quest-card mb-3 level-' + q.level + '">';
-        html += '  <div class="card-body">';
-        html += '    <h6 class="card-title fw-bold">';
-        html += '      <span class="badge bg-secondary me-2 rounded-pill">Lv.' + q.level + '</span>';
-        html += applyRuby(q.title);
-        html += '    </h6>';
-        html += '    <p class="card-text small text-muted mb-3">' + applyRuby(q.description) + '</p>';
-        html += '    <button class="btn btn-quest btn-sm w-100 rounded-pill py-2" onclick="submitQuest(\'' + q.id + '\', \'' + q.title + '\')">';
-        html += '      <i class="bi bi-send-fill"></i> <ruby>提出<rt>ていしゅつ</rt></ruby>する';
-        html += '    </button>';
-        html += '  </div>';
-        html += '</div>';
+      runGoogleScript('getQuestData', [], function (quests) {
+        if (!quests || quests.length === 0) {
+          container.innerHTML = `
+            <div class="alert alert-warning text-center" role="alert">
+              クエストが見つかりません。<br>先生に確認してください。
+            </div>
+          `;
+          return;
+        }
+
+        var html = '';
+        quests.forEach(function (q) {
+          const isCleared = profile && profile.clearedQuests && profile.clearedQuests.includes(q.id);
+          const cardClass = isCleared ? 'border-success bg-light' : 'quest-card-interactive';
+          const badge = isCleared ? '<span class="badge bg-success position-absolute top-0 start-100 translate-middle p-2 border border-light rounded-circle"><span class="visually-hidden">Clear</span>🏆</span>' : '';
+
+          // Store raw quest data for modal access
+          // We can attach it to the DOM or keep in memory. Let's keep in memory map if easy, or just use JSON in data attr.
+          // Using data attribute for simplicity of statelessness.
+          const safeTitle = q.title.replace(/"/g, '&quot;');
+          const safeDesc = q.description.replace(/"/g, '&quot;');
+
+          html += `<div class="card mb-3 level-${q.level} ${cardClass} position-relative" 
+                       onclick="openQuestDetail('${q.id}', '${safeTitle}', '${safeDesc}', ${q.level}, '${q.demoSlideId || ''}', ${isCleared})">`;
+          html += badge;
+          html += '  <div class="card-body">';
+          html += '    <h6 class="card-title fw-bold">';
+          html += '      <span class="badge bg-secondary me-2 rounded-pill">Lv.' + q.level + '</span>';
+          html += applyRuby(q.title);
+          html += '    </h6>';
+          html += '    <p class="card-text small text-muted mb-0 text-truncate">' + applyRuby(q.description) + '</p>'; // Truncate desc in card
+          if (isCleared) {
+            html += '<div class="mt-2 text-success small fw-bold"><i class="bi bi-check-circle-fill"></i> クリア済み</div>';
+          } else {
+            html += '<div class="mt-2 text-primary small"><i class="bi bi-cursor"></i> クリックして詳細を見る</div>';
+          }
+          html += '  </div>';
+          html += '</div>';
+        });
+
+        container.innerHTML = html;
       });
-
-      container.innerHTML = html;
     });
+  }
+
+  // クエスト詳細モーダルを開く
+  function openQuestDetail(id, title, desc, level, demoSlideId, isCleared) {
+    document.getElementById('quest-detail-title').textContent = title;
+    document.getElementById('quest-detail-desc').innerHTML = applyRuby(desc);
+    document.getElementById('quest-detail-level').textContent = 'Lv.' + level;
+
+    // Slide Embed
+    const slideContainer = document.getElementById('quest-detail-slide-container');
+    if (demoSlideId && demoSlideId !== 'undefined' && demoSlideId !== 'null') {
+      const embedUrl = 'https://docs.google.com/presentation/d/' + demoSlideId + '/embed?start=false&loop=false&delayms=3000';
+      slideContainer.innerHTML = '<iframe src="' + embedUrl + '" allowfullscreen="true" mozallowfullscreen="true" webkitallowfullscreen="true" class="w-100 h-100 border-0"></iframe>';
+    } else {
+      slideContainer.innerHTML = '<div class="position-absolute top-50 start-50 translate-middle text-center text-muted">' +
+        '<i class="bi bi-file-earmark-slides" style="font-size: 3rem;"></i><br>' +
+        'ガイドスライドなし' +
+        '</div>';
+    }
+
+    // Actions
+    const actionsDiv = document.getElementById('quest-detail-actions');
+    if (isCleared) {
+      actionsDiv.innerHTML = '<button class="btn btn-outline-success btn-lg rounded-pill" disabled>' +
+        '<i class="bi bi-check-circle-fill"></i> クリア済み！' +
+        '</button>';
+    } else {
+      actionsDiv.innerHTML = '<button class="btn btn-quest btn-lg w-100 rounded-pill py-3 fw-bold shadow-sm" onclick="submitQuest(\'' + id + '\', \'' + title + '\')">' +
+        '<i class="bi bi-send-fill"></i> <ruby>提出<rt>ていしゅつ</rt></ruby>する' +
+        '</button>';
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('questDetailModal'));
+    modal.show();
+  }
+
+  // プロフィール更新 (ヘッダー)
+  function updateHeaderProfile(profile) {
+    if (!profile) return;
+    document.getElementById('user-level-badge').textContent = profile.level;
+    document.getElementById('user-level').textContent = profile.level;
+    document.getElementById('user-xp').textContent = `(${profile.xp} XP)`;
+
+    // XP Progress (Assuming 100 XP per level for simplicity)
+    const currentLevelXp = profile.xp % 100;
+    document.getElementById('xp-progress').style.width = currentLevelXp + '%';
   }
 
   // ルビ振りユーティリティ
@@ -90,111 +158,286 @@
     return text.replace(/([\u4E00-\u9FFF]+)\(([ぁ-んァ-ン]+)\)/g, '<ruby>$1<rt>$2</rt></ruby>');
   }
 
-  // 提出処理
-  function submitQuest(questId, title) {
+  // クエスト提出 (Submit)
+  function submitQuest(questId, questTitle) {
+    // 1. UI Feedback: Disable button & Show Spinner
+    // Find the button that was clicked. Since we don't pass 'this', we find by questId or just use SweetAlert loader.
+    // Better: Update RenderQuests to pass 'this' or use a unique ID.
+    // For now, let's use SweetAlert's loading state which blocks interaction effectively.
+
     Swal.fire({
-      title: '提出しますか？',
-      html: '<span class="fw-bold text-dark">' + title + '</span><br>として提出します。<br><small class="text-muted">※自動的にコピーが保存されます</small>',
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonColor: '#f1c40f',
-      cancelButtonColor: '#bdc3c7',
-      confirmButtonText: '<span style="color:#000; font-weight:bold">はい、提出！</span>',
-      cancelButtonText: 'やめる'
-    }).then(function (result) {
-      if (result.isConfirmed) {
-        runGoogleScript('submitSlide', [questId, title], function (res) {
-          Swal.fire({
-            title: '大成功！',
-            text: 'クエストをクリアしました！',
-            icon: 'success',
-            confirmButtonColor: '#f1c40f',
-            timer: 2000,
-            showConfirmButton: false
-          });
-        });
+      title: '提出中...',
+      text: 'スライドをコピーして提出しています。\nそのままお待ちください。',
+      allowOutsideClick: false,
+      didOpen: () => {
+        Swal.showLoading();
       }
     });
+
+    // 2. Call GAS
+    google.script.run
+      .withSuccessHandler(function (result) {
+        Swal.close(); // Close loader
+        Swal.fire({
+          title: '提出完了！',
+          text: 'クエストをクリアしましたか？\n（※反映まで少し時間がかかります）',
+          icon: 'success',
+          timer: 3000,
+          showConfirmButton: false
+        });
+        // 画面リロードして反映（Clearedバッジなどを更新）
+        setTimeout(function () {
+          // Reload Quest View
+          document.querySelector('button[onclick*="quest-view"]').click();
+          // loadGallery(); // Optional
+        }, 3000);
+      })
+      .withFailureHandler(function (e) {
+        Swal.close();
+        Swal.fire('エラー', '提出に失敗しました: ' + e.message, 'error');
+      })
+      .submitSlide(questId, questTitle);
   }
 
-  // ギャラリー読み込み
+  // ギャラリー読み込み (v2.6)
   function loadGallery() {
-    var container = document.getElementById('gallery-list');
-    container.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-grow text-warning" role="status"></div><p class="mt-2">読み込み中...</p></div>';
+    const container = document.getElementById('gallery-list');
+    const filter = document.getElementById('gallery-filter') ? document.getElementById('gallery-filter').value : 'all';
 
-    console.log("Fetching gallery data... (v2.5)"); // Cache busting log
-    runGoogleScript('getGalleryData', [], function (jsonString) {
+    container.innerHTML = `
+      <div class="col-12 text-center py-5">
+        <div class="spinner-border text-warning" role="status">
+          <span class="visually-hidden">Loading...</span>
+        </div>
+      </div>
+    `;
+
+    runGoogleScript('getGalleryData', [filter], function (jsonString) {
       console.log("Raw JSON received:", jsonString);
 
       let data = [];
       try {
-        // If jsonString is already an object (unlikely but possible if GAS auto-parses), handle it
-        if (typeof jsonString === 'object' && jsonString !== null) {
-          data = jsonString;
-        } else {
-          data = JSON.parse(jsonString || "[]");
-        }
+        data = JSON.parse(jsonString);
       } catch (e) {
-        console.error("JSON Parse Error:", e);
+        console.error("JSON parse error", e);
       }
 
-      // Strict array check
-      if (!Array.isArray(data)) {
-        console.error("Data is not an array:", data);
-        container.innerHTML = '<div class="text-center py-5 text-muted">データ形式エラー</div>';
+      // Check data integrity
+      if (!Array.isArray(data) || data.length === 0) {
+        container.innerHTML = `
+          <div class="col-12 text-center text-muted py-5">
+            <i class="bi bi-inbox" style="font-size: 2rem;"></i><br>
+            投稿が見つかりません
+          </div>
+        `;
         return;
       }
 
-      if (data.length === 0) {
-        console.warn("Parsed Gallery data is empty");
-        container.innerHTML = '<div class="text-center py-5 text-muted">まだ提出がありません</div>';
-        return;
-      }
-
-      var html = '';
+      let html = '';
       data.forEach(function (item) {
-        // サムネイルURL (Google Drive Direct Link or Dummy)
-        var thumbSrc = item.thumbnailUrl;
-        var dateStr = 'No Date';
+        // Thumbnail URL handling
+        let thumbSrc = item.thumbnailUrl;
+
+        // Date formatting based on input format
+        let dateStr = 'No Date';
         try {
           if (item.timestamp) {
-            // ISO string to Date object
-            var d = new Date(item.timestamp);
+            let d = new Date(item.timestamp);
             if (!isNaN(d.getTime())) {
               dateStr = d.toLocaleDateString('ja-JP');
             } else {
               dateStr = String(item.timestamp);
             }
           }
-        } catch (e) {
-          console.warn("Date parse error", e);
-        }
+        } catch (e) { }
+
+        // Review Logic variables
+        const approvals = item.approvals || 0;
+        const status = item.status || 'pending';
+        const isMine = item.isMine;
+        const hasReviewed = item.hasReviewed;
+
+        let progressPercent = Math.min((approvals / 5) * 100, 100);
+        let progressColor = status === 'approved' ? 'bg-success' : 'bg-warning';
+        let statusBadge = status === 'approved' ? '<span class="badge bg-success mb-2">🏆 クリア！</span>' : '';
+        if (isMine) statusBadge += ' <span class="badge bg-primary mb-2 ms-1">あなた</span>';
 
         html += '<div class="col-12 col-md-6">';
-        html += '  <div class="card gallery-card h-100">';
+        html += '  <div class="card gallery-card h-100 border-0 shadow-sm">';
         html += '    <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pb-0">';
         html += '      <span class="badge bg-light text-secondary border"><i class="bi bi-clock"></i> ' + dateStr + '</span>';
+        html += statusBadge;
         html += '    </div>';
+
         html += '    <div class="card-body">';
-        html += '      <div class="slide-container rounded shadow-sm" onclick="openGalleryModal(\'' + item.embedUrl + '\', \'' + thumbSrc + '\')" title="クリックして見る">';
-        html += '        <img src="' + thumbSrc + '" alt="slide thumbnail">';
+        html += '      <div class="slide-container rounded shadow-sm mb-3" onclick="openGalleryModal(\'' + item.embedUrl + '\', \'' + thumbSrc + '\')" title="クリックして見る">';
+        html += '        <img src="' + thumbSrc + '" alt="slide thumbnail" class="rounded">';
         html += '        <div class="play-icon-overlay"><i class="bi bi-play-circle-fill"></i></div>';
         html += '      </div>';
-        html += '      <div class="d-flex justify-content-between align-items-center mt-3">';
-        html += '         <small class="fw-bold text-truncate" style="max-width: 60%;">' + item.title + '</small>';
-        html += '         <button class="btn btn-like-outline btn-sm rounded-pill px-3" onclick="sendLike(this, ' + item.rowIndex + ')">';
-        html += '           <i class="bi bi-heart-fill"></i> <span class="like-count fw-bold">' + item.likes + '</span>';
-        html += '         </button>';
+
+        html += '      <div class="d-flex justify-content-between align-items-start mb-2">';
+        html += '         <small class="fw-bold text-truncate text-dark" style="max-width: 60%;">' + item.title + '</small>';
+        html += '         <small class="text-muted" style="font-size:0.75rem;">' + item.userId.split('@')[0] + '</small>';
         html += '      </div>';
+        html += '      <div class="progress mb-3" style="height: 10px;">';
+        html += '        <div class="progress-bar ' + progressColor + ' progress-bar-striped progress-bar-animated" role="progressbar" style="width: ' + progressPercent + '%"></div>';
+        html += '      </div>';
+
+        // Action Buttons Logic
+        if (status === 'approved') {
+          html += '     <div class="text-center text-success fw-bold small"><i class="bi bi-stars"></i> クエスト・クリア！</div>';
+        } else if (isMine) {
+          html += '     <div class="d-grid"><button class="btn btn-light btn-sm text-muted" disabled>自分の作品です</button></div>';
+        } else if (hasReviewed) {
+          html += '     <div class="d-grid"><button class="btn btn-outline-secondary btn-sm" disabled><i class="bi bi-check2"></i> 評価済み</button></div>';
+        } else {
+          html += '      <div class="d-flex justify-content-between gap-2">';
+          html += '        <button class="btn btn-outline-danger flex-grow-1 btn-sm rounded-pill" onclick="sendReview(this, ' + item.rowIndex + ', false)">';
+          html += '          <i class="bi bi-x-circle"></i> もう少し...';
+          html += '        </button>';
+          html += '        <button class="btn btn-outline-success flex-grow-1 btn-sm rounded-pill" onclick="sendReview(this, ' + item.rowIndex + ', true)">';
+          html += '          <i class="bi bi-check-circle"></i> 合格！';
+          html += '        </button>';
+          html += '      </div>';
+        }
         html += '    </div>';
         html += '  </div>';
         html += '</div>';
       });
 
-      console.log("Rendering gallery HTML...");
       container.innerHTML = html;
-      console.log("Gallery rendered successfully.");
+    });
+  }
 
+  // マイページ読み込み
+  function loadMyPage() {
+    runGoogleScript('getUserProfile', [], function (profile) {
+      if (!profile) return;
+      updateHeaderProfile(profile);
+
+      document.getElementById('mypage-level').textContent = profile.level;
+      document.getElementById('mypage-user-id').textContent = profile.userId.split('@')[0];
+      document.getElementById('mypage-xp').textContent = profile.xp;
+
+      const currentLevelXp = profile.xp % 100;
+      document.getElementById('mypage-progress').style.width = currentLevelXp + '%';
+      document.getElementById('mypage-next-xp').textContent = 100 - currentLevelXp;
+
+      const list = document.getElementById('mypage-cleared-list');
+      if (profile.clearedQuests && profile.clearedQuests.length > 0) {
+        runGoogleScript('getQuestData', [], function (quests) {
+          let html = '';
+          const questMap = {};
+          quests.forEach(q => questMap[q.id] = q.title);
+
+          profile.clearedQuests.forEach(qid => {
+            const title = questMap[qid] || 'Unknown Quest';
+            html += `<li class="list-group-item"><i class="bi bi-check-circle-fill text-success"></i> ${title}</li>`;
+          });
+          list.innerHTML = html;
+        });
+      } else {
+        list.innerHTML = '<li class="list-group-item text-muted text-center py-4">まだクリアしていません</li>';
+      }
+    });
+  }
+
+  // 先生ダッシュボード (Password Protected)
+  let teacherPassword = '';
+
+  function openTeacherDashboard() {
+    Swal.fire({
+      title: 'パスワードを入力',
+      input: 'password',
+      inputAttributes: {
+        autocapitalize: 'off'
+      },
+      showCancelButton: true,
+      confirmButtonText: 'ログイン',
+      showLoaderOnConfirm: true,
+      preConfirm: (pass) => {
+        return new Promise((resolve, reject) => {
+          // Validate password by trying to fetch data
+          runGoogleScript('getTeacherDashboardData', [pass], function (jsonString) {
+            console.log("Dashboard response:", jsonString);
+            let data = null;
+            try {
+              data = JSON.parse(jsonString);
+            } catch (e) {
+              console.error("JSON Parse Error", e);
+            }
+
+            if (data) {
+              teacherPassword = pass; // Store for valid session
+              resolve(data);
+            } else {
+              reject(new Error('認証失敗: データ取得エラー'));
+            }
+          }, function (e) {
+            Swal.showValidationMessage('パスワードが違います: ' + e.message);
+            resolve(false); // Stay in modal
+          });
+        });
+      },
+      allowOutsideClick: () => !Swal.isLoading()
+    }).then((result) => {
+      if (result.isConfirmed && result.value) {
+        const data = result.value;
+        const modal = new bootstrap.Modal(document.getElementById('teacherModal'));
+        modal.show();
+
+        const tbody = document.getElementById('teacher-student-list');
+        let html = '';
+        if (data.students) {
+          data.students.forEach(s => {
+            const emailLocal = s.email ? s.email.split('@')[0] : 'Unknown';
+            html += `<tr>
+                   <td>${emailLocal}</td>
+                   <td><span class="badge bg-warning text-dark">${s.level}</span></td>
+                   <td>${s.xp}</td>
+                   <td>${s.clearedCount}</td>
+                   <td>${s.lastActive}</td>
+                 </tr>`;
+          });
+        }
+        tbody.innerHTML = html;
+      }
+    });
+  }
+
+  // クエストインポート
+  function importQuests() {
+    const jsonStr = document.getElementById('quest-json-input').value;
+    if (!jsonStr) return;
+
+    if (!teacherPassword) {
+      Swal.fire('エラー', '再ログインしてください', 'error');
+      return;
+    }
+
+    runGoogleScript('saveQuestData', [jsonStr, teacherPassword], function (res) {
+      alert('インポート成功: ' + res.count + '件');
+    });
+  }
+
+  // パスワード変更
+  function changePassword() {
+    const newPass = document.getElementById('new-password').value;
+    if (!newPass) return;
+
+    if (!teacherPassword) {
+      Swal.fire('エラー', '再ログインしてください', 'error');
+      return;
+    }
+
+    runGoogleScript('changeTeacherPassword', [teacherPassword, newPass], function (res) {
+      if (res.success) {
+        teacherPassword = newPass; // Update memory
+        Swal.fire('成功', 'パスワードを変更しました。次回から新しいパスワードを使用してください。', 'success');
+        document.getElementById('new-password').value = '';
+      }
+    }, function (e) {
+      Swal.fire('エラー', e.message, 'error');
     });
   }
 
@@ -233,18 +476,41 @@
     viewArea.innerHTML = `<iframe src="${url}" allowfullscreen="true" mozallowfullscreen="true" webkitallowfullscreen="true" class="w-100 h-100"></iframe>`;
   }
 
-  // いいね機能
-  function sendLike(btn, rowIndex) {
-    var countSpan = btn.querySelector('.like-count');
-    var current = parseInt(countSpan.innerText);
-    countSpan.innerText = current + 1;
-    btn.classList.remove('btn-like-outline');
-    btn.classList.add('btn-like-active');
-    btn.disabled = true;
+  // 評価送信 (Review)
+  function sendReview(btn, rowIndex, isApproved) {
+    // UI Immediate Feedback (Disable buttons in this group)
+    const parent = btn.parentElement;
+    const buttons = parent.querySelectorAll('button');
+    buttons.forEach(b => b.disabled = true);
 
-    google.script.run
-      .withFailureHandler(function (e) { console.error(e); })
-      .addLike(rowIndex);
+    const actionName = isApproved ? '合格判定' : 'フィードバック';
+
+    // Call GAS
+    runGoogleScript('reviewSubmission', [rowIndex, isApproved], function (result) {
+      if (result.success) {
+        // Show XP gain
+        Swal.fire({
+          title: '評価完了！',
+          text: result.message, // "+10 XP" or "Daily Limit"
+          icon: 'success',
+          timer: 2000,
+          showConfirmButton: false,
+          toast: true,
+          position: 'top-end'
+        });
+
+        // Reload gallery to show progress update? Or just leave it disabled.
+        // Reloading might be too heavy. Just let user know it worked.
+        // Ideally updates progress bar locally, but simpler to just disable for now.
+
+      } else {
+        Swal.fire('エラー', result.message, 'error');
+        buttons.forEach(b => b.disabled = false); // Re-enable on error (except if "already reviewed")
+      }
+    }, function (e) {
+      console.error(e);
+      buttons.forEach(b => b.disabled = false);
+    });
   }
 
   // GAS関数呼び出し共通処理
