@@ -2,16 +2,11 @@
   // 起動確認ログ
   console.log("Slide Guild App Loaded");
 
-  // クエストデータ定義
-  var QUESTS = [
-    { id: "q1", title: "画像の召喚", desc: "「挿入」メニューから好きな画像を入れよう", level: 1 },
-    { id: "q2", title: "魔法の文字", desc: "ワードアートを使って、名前を派手に書こう", level: 1 },
-    { id: "q3", title: "動きの魔法", desc: "画像にアニメーションをつけて動かそう", level: 2 },
-    { id: "q4", title: "リンクの扉", desc: "クリックすると別のスライドに飛ぶボタンを作ろう", level: 3 }
-  ];
+  // クエストデータはGASから取得するようになったため削除
+
 
   // 画面ロード時に実行
-  document.addEventListener('DOMContentLoaded', function() {
+  document.addEventListener('DOMContentLoaded', function () {
     renderQuests();
   });
 
@@ -22,7 +17,7 @@
     for (var i = 0; i < navs.length; i++) {
       navs[i].classList.remove('active');
     }
-    
+
     // 押されたボタンにactiveをつける
     if (el) {
       el.classList.add('active');
@@ -33,7 +28,7 @@
     for (var k = 0; k < sections.length; k++) {
       sections[k].classList.add('d-none');
     }
-    
+
     var target = document.getElementById(viewId);
     if (target) {
       target.classList.remove('d-none');
@@ -46,26 +41,53 @@
   }
 
   // クエスト一覧描画
+  // クエスト一覧描画
   function renderQuests() {
     var container = document.getElementById('quest-list');
-    var html = '';
 
-    QUESTS.forEach(function(q) {
-      html += '<div class="card quest-card mb-3 level-' + q.level + '">';
-      html += '  <div class="card-body">';
-      html += '    <h6 class="card-title fw-bold">';
-      html += '      <span class="badge bg-secondary me-2 rounded-pill">Lv.' + q.level + '</span>';
-      html +=       q.title;
-      html += '    </h6>';
-      html += '    <p class="card-text small text-muted mb-3">' + q.desc + '</p>';
-      html += '    <button class="btn btn-quest btn-sm w-100 rounded-pill py-2" onclick="submitQuest(\'' + q.id + '\', \'' + q.title + '\')">';
-      html += '      <i class="bi bi-send-fill"></i> <ruby>提出<rt>ていしゅつ</rt></ruby>する';
-      html += '    </button>';
-      html += '  </div>';
-      html += '</div>';
+    // スケルトンスクリーン
+    container.innerHTML = `
+      <div class="text-center py-5 text-muted">
+        <div class="spinner-grow text-warning" role="status"></div>
+        <p class="mt-2 text-muted small">冒険の書を読み込んでいます...</p>
+      </div>
+    `;
+
+    runGoogleScript('getQuestData', [], function (quests) {
+      if (!quests || quests.length === 0) {
+        container.innerHTML = `
+          <div class="alert alert-warning text-center" role="alert">
+            クエストが見つかりません。<br>先生に確認してください。
+          </div>
+        `;
+        return;
+      }
+
+      var html = '';
+      quests.forEach(function (q) {
+        html += '<div class="card quest-card mb-3 level-' + q.level + '">';
+        html += '  <div class="card-body">';
+        html += '    <h6 class="card-title fw-bold">';
+        html += '      <span class="badge bg-secondary me-2 rounded-pill">Lv.' + q.level + '</span>';
+        html += applyRuby(q.title);
+        html += '    </h6>';
+        html += '    <p class="card-text small text-muted mb-3">' + applyRuby(q.description) + '</p>';
+        html += '    <button class="btn btn-quest btn-sm w-100 rounded-pill py-2" onclick="submitQuest(\'' + q.id + '\', \'' + q.title + '\')">';
+        html += '      <i class="bi bi-send-fill"></i> <ruby>提出<rt>ていしゅつ</rt></ruby>する';
+        html += '    </button>';
+        html += '  </div>';
+        html += '</div>';
+      });
+
+      container.innerHTML = html;
     });
+  }
 
-    container.innerHTML = html;
+  // ルビ振りユーティリティ
+  function applyRuby(text) {
+    if (!text) return '';
+    if (text.includes('<') && text.includes('>')) return text;
+    return text.replace(/([\u4E00-\u9FFF]+)\(([ぁ-んァ-ン]+)\)/g, '<ruby>$1<rt>$2</rt></ruby>');
   }
 
   // 提出処理
@@ -79,9 +101,9 @@
       cancelButtonColor: '#bdc3c7',
       confirmButtonText: '<span style="color:#000; font-weight:bold">はい、提出！</span>',
       cancelButtonText: 'やめる'
-    }).then(function(result) {
+    }).then(function (result) {
       if (result.isConfirmed) {
-        runGoogleScript('submitSlide', [questId, title], function(res) {
+        runGoogleScript('submitSlide', [questId, title], function (res) {
           Swal.fire({
             title: '大成功！',
             text: 'クエストをクリアしました！',
@@ -100,21 +122,53 @@
     var container = document.getElementById('gallery-list');
     container.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-grow text-warning" role="status"></div><p class="mt-2">読み込み中...</p></div>';
 
-    runGoogleScript('getGalleryData', [], function(data) {
-      if (!data || data.length === 0) {
+    console.log("Fetching gallery data... (v2.5)"); // Cache busting log
+    runGoogleScript('getGalleryData', [], function (jsonString) {
+      console.log("Raw JSON received:", jsonString);
+
+      let data = [];
+      try {
+        // If jsonString is already an object (unlikely but possible if GAS auto-parses), handle it
+        if (typeof jsonString === 'object' && jsonString !== null) {
+          data = jsonString;
+        } else {
+          data = JSON.parse(jsonString || "[]");
+        }
+      } catch (e) {
+        console.error("JSON Parse Error:", e);
+      }
+
+      // Strict array check
+      if (!Array.isArray(data)) {
+        console.error("Data is not an array:", data);
+        container.innerHTML = '<div class="text-center py-5 text-muted">データ形式エラー</div>';
+        return;
+      }
+
+      if (data.length === 0) {
+        console.warn("Parsed Gallery data is empty");
         container.innerHTML = '<div class="text-center py-5 text-muted">まだ提出がありません</div>';
         return;
       }
 
       var html = '';
-      data.forEach(function(item) {
-        // 画像がない場合のダミー設定
-        var thumbSrc = item.thumbnail 
-          ? 'data:image/png;base64,' + item.thumbnail
-          : 'https://dummyimage.com/640x360/cccccc/ffffff&text=No+Image';
-        
-        var viewerUrl = 'https://docs.google.com/presentation/d/' + item.slideId + '/preview';
-        var dateStr = item.timestamp.toString().split(' ')[0];
+      data.forEach(function (item) {
+        // サムネイルURL (Google Drive Direct Link or Dummy)
+        var thumbSrc = item.thumbnailUrl;
+        var dateStr = 'No Date';
+        try {
+          if (item.timestamp) {
+            // ISO string to Date object
+            var d = new Date(item.timestamp);
+            if (!isNaN(d.getTime())) {
+              dateStr = d.toLocaleDateString('ja-JP');
+            } else {
+              dateStr = String(item.timestamp);
+            }
+          }
+        } catch (e) {
+          console.warn("Date parse error", e);
+        }
 
         html += '<div class="col-12 col-md-6">';
         html += '  <div class="card gallery-card h-100">';
@@ -122,9 +176,9 @@
         html += '      <span class="badge bg-light text-secondary border"><i class="bi bi-clock"></i> ' + dateStr + '</span>';
         html += '    </div>';
         html += '    <div class="card-body">';
-        html += '      <div class="slide-container rounded shadow-sm" onclick="window.open(\'' + viewerUrl + '\', \'_blank\')" title="クリックして見る">';
+        html += '      <div class="slide-container rounded shadow-sm" onclick="openGalleryModal(\'' + item.embedUrl + '\', \'' + thumbSrc + '\')" title="クリックして見る">';
         html += '        <img src="' + thumbSrc + '" alt="slide thumbnail">';
-        html += '        <div class="play-icon-overlay"><i class="bi bi-box-arrow-up-right"></i></div>';
+        html += '        <div class="play-icon-overlay"><i class="bi bi-play-circle-fill"></i></div>';
         html += '      </div>';
         html += '      <div class="d-flex justify-content-between align-items-center mt-3">';
         html += '         <small class="fw-bold text-truncate" style="max-width: 60%;">' + item.title + '</small>';
@@ -136,9 +190,47 @@
         html += '  </div>';
         html += '</div>';
       });
-      
+
+      console.log("Rendering gallery HTML...");
       container.innerHTML = html;
+      console.log("Gallery rendered successfully.");
+
     });
+  }
+
+  // ギャラリーモーダルを開く (画像プレビュー + 再生ボタン)
+  function openGalleryModal(embedUrl, thumbSrc) {
+    var modalBody = document.querySelector('#galleryModal .modal-body');
+
+    // モーダルの中身をリセット（画像表示モード）
+    // 再生ボタンを押すと iframe に書き換わる
+    var contentHtml = `
+      <button type="button" class="btn-close btn-close-white position-absolute top-0 end-0 m-2 z-3" data-bs-dismiss="modal" aria-label="Close"></button>
+      <div class="ratio ratio-16x9 shadow-lg rounded overflow-hidden bg-black position-relative" id="gallery-view-area">
+        <img src="${thumbSrc}" class="w-100 h-100 object-fit-contain" alt="Preview">
+        <div class="position-absolute top-50 start-50 translate-middle">
+          <button class="btn btn-warning btn-lg rounded-pill fw-bold shadow-lg" onclick="playSlide('${embedUrl}')">
+            <i class="bi bi-play-fill"></i> スライドを再生
+          </button>
+        </div>
+      </div>
+      <div class="text-center mt-3">
+        <button class="btn btn-light rounded-pill fw-bold" data-bs-dismiss="modal">
+           <i class="bi bi-x-circle"></i> 閉じる
+        </button>
+      </div>
+    `;
+
+    modalBody.innerHTML = contentHtml;
+
+    var myModal = new bootstrap.Modal(document.getElementById('galleryModal'));
+    myModal.show();
+  }
+
+  // スライド再生（iframeに置き換え）
+  function playSlide(url) {
+    var viewArea = document.getElementById('gallery-view-area');
+    viewArea.innerHTML = `<iframe src="${url}" allowfullscreen="true" mozallowfullscreen="true" webkitallowfullscreen="true" class="w-100 h-100"></iframe>`;
   }
 
   // いいね機能
@@ -151,30 +243,47 @@
     btn.disabled = true;
 
     google.script.run
-      .withFailureHandler(function(e){ console.error(e); })
+      .withFailureHandler(function (e) { console.error(e); })
       .addLike(rowIndex);
   }
 
   // GAS関数呼び出し共通処理
-  function runGoogleScript(funcName, args, onSuccess) {
-    var loading = document.getElementById('loading-overlay');
-    if(loading) loading.classList.remove('d-none');
+  // トースト表示機能
+  function showToast(title, message, type = 'info') {
+    const toastEl = document.getElementById('liveToast');
+    const toastTitle = document.getElementById('toast-title');
+    const toastBody = document.getElementById('toast-body');
 
+    toastTitle.textContent = title;
+    toastBody.textContent = message;
+
+    // タイプに応じた色変更などは必要なら追加
+
+    const toast = new bootstrap.Toast(toastEl);
+    toast.show();
+  }
+
+  // GAS関数呼び出し共通処理 (非同期・非ブロッキング)
+  function runGoogleScript(funcName, args, onSuccess, onFailure, onFinally) {
     google.script.run
-      .withSuccessHandler(function(result) {
-        if(loading) loading.classList.add('d-none');
+      .withSuccessHandler(function (result) {
         if (onSuccess) onSuccess(result);
+        if (onFinally) onFinally();
       })
-      .withFailureHandler(function(error) {
+      .withFailureHandler(function (error) {
         console.error("GAS Error:", error);
-        if(loading) loading.classList.add('d-none');
-        Swal.fire({
-          title: 'エラー',
-          text: '通信に失敗しました。',
-          icon: 'error',
-          confirmButtonColor: '#e74c3c'
-        });
+        if (onFailure) {
+          onFailure(error);
+        } else {
+          Swal.fire({
+            title: 'エラー',
+            text: '通信に失敗しました: ' + error.message,
+            icon: 'error',
+            confirmButtonColor: '#e74c3c'
+          });
+        }
+        if (onFinally) onFinally();
       })
-      [funcName](...args);
+    [funcName](...args);
   }
 </script>

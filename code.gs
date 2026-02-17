@@ -66,17 +66,26 @@ function setupAdmin() {
     const folder = DriveApp.createFolder(folderName);
     folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     
+    // DB作成
     const ss = SpreadsheetApp.create(`SlideGuild_DB_${new Date().getFullYear()}`);
     const file = DriveApp.getFileById(ss.getId());
     file.moveTo(folder);
 
+    // 1. Submissions Sheet
     const sheet = ss.getSheets()[0];
     sheet.setName('submissions');
-    // ヘッダー行
-    const headers = ['timestamp', 'userId', 'questId', 'slideId', 'slideUrl', 'title', 'likes', 'deletedAt'];
+    // ヘッダー定義更新: thumbnailFileIdを追加
+    const headers = ['timestamp', 'userId', 'questId', 'slideId', 'slideUrl', 'title', 'likes', 'deletedAt', 'thumbnailFileId'];
     sheet.appendRow(headers);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, headers.length).setBackground('#fff2cc').setFontWeight('bold');
+
+    // 2. Quests Sheet
+    const questSheet = ss.insertSheet('quests');
+    const questHeaders = ['id', 'title', 'description', 'level', 'tags', 'demoSlideId', 'isActive'];
+    questSheet.appendRow(questHeaders);
+    questSheet.setFrozenRows(1);
+    questSheet.getRange(1, 1, 1, questHeaders.length).setBackground('#d9ead3').setFontWeight('bold');
 
     // コピー用コード生成
     const newConfigCode = `const CONFIG = {
@@ -99,6 +108,133 @@ function setupAdmin() {
   }
 }
 
+// ------------------------------------------
+// 📜 Quest Data Management
+// ------------------------------------------
+
+// 管理者用: JSONテキストを受け取ってクエストを一括登録
+function saveQuestData(jsonString) {
+  if (!CONFIG.MASTER_SS_ID) throw new Error('管理者設定が未完了です');
+  
+  try {
+    const quests = JSON.parse(jsonString);
+    if (!Array.isArray(quests)) throw new Error('JSONは配列形式である必要があります');
+
+    const ss = SpreadsheetApp.openById(CONFIG.MASTER_SS_ID);
+    let sheet = ss.getSheetByName('quests');
+    if (!sheet) {
+      sheet = ss.insertSheet('quests');
+      sheet.appendRow(['id', 'title', 'description', 'level', 'tags', 'demoSlideId', 'isActive']);
+    }
+
+    // 既存データをクリア（ヘッダー以外）
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
+    }
+
+    const rows = quests.map(q => [
+      q.id || Utilities.getUuid(),
+      q.title,
+      q.description,
+      q.level,
+      Array.isArray(q.tags) ? q.tags.join(',') : q.tags,
+      q.demoSlideId || '',
+      true // isActive default
+    ]);
+
+    if (rows.length > 0) {
+      sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+    }
+    
+    return { success: true, count: rows.length };
+
+  } catch (e) {
+    throw new Error(`インポート失敗: ${e.toString()}`);
+  }
+}
+
+// ユーザー用: クエスト一覧取得
+// ユーザー用: クエスト一覧取得
+// ユーザー用: クエスト一覧取得
+function getQuestData() {
+  // 設定がない場合は空配列を返す（エラーにしない）
+  if (!CONFIG.MASTER_SS_ID) {
+    console.warn("MASTER_SS_ID is not set.");
+    return [];
+  }
+
+  try {
+    const ss = SpreadsheetApp.openById(CONFIG.MASTER_SS_ID);
+    let sheet = ss.getSheetByName('quests');
+    
+    // シートがない場合は自動復旧
+    if (!sheet) {
+      console.warn("Quests sheet not found. Recovering...");
+      sheet = initQuestsSheet(ss);
+    }
+
+    const data = sheet.getDataRange().getValues();
+    // ヘッダーのみの場合は空
+    if (data.length <= 1) return [];
+
+    data.shift(); // ヘッダー除去
+    
+    // isActiveなものだけ返す
+    const activeQuests = data.filter(row => {
+      const isActive = row[6];
+      // 厳密な判定: true (boolean) または "true" (string, case-insensitive) または 空文字(デフォルト有効とする場合)
+      // ここでは「FALSE」や「false」と明記されていなければ有効とみなすロジックに変更
+      if (typeof isActive === 'string') {
+        return isActive.toLowerCase() !== 'false';
+      }
+      return isActive !== false; 
+    });
+
+    console.log(`Fetched ${activeQuests.length} active quests.`);
+
+    return activeQuests.map(row => ({
+      id: row[0],
+      title: row[1],
+      description: row[2],
+      level: Number(row[3]),
+      tags: row[4] ? row[4].toString().split(',') : [],
+      demoSlideId: row[5]
+    }));
+  } catch(e) {
+    console.warn("Quest Fetch Error", e);
+    // 失敗時は空配列
+    return [];
+  }
+}
+
+// 🛠️ クエストシートの初期化・復旧
+function initQuestsSheet(ss) {
+  let sheet = ss.getSheetByName('quests');
+  if (!sheet) {
+    sheet = ss.insertSheet('quests');
+  }
+  
+  // ヘッダー再設定
+  // 既存データがあるかもしれないので、1行目が空の場合のみヘッダー追加
+  if (sheet.getLastRow() === 0) {
+    const questHeaders = ['id', 'title', 'description', 'level', 'tags', 'demoSlideId', 'isActive'];
+    sheet.appendRow(questHeaders);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, questHeaders.length).setBackground('#d9ead3').setFontWeight('bold');
+    
+    // デフォルトデータの投入
+    const defaultQuests = [
+      [Utilities.getUuid(), '画像の召喚', '「挿入」メニューから好きな画像を入れよう', 1, 'image', '', true],
+      [Utilities.getUuid(), '魔法の文字', 'ワードアートを使って、名前を派手に書こう', 1, 'text', '', true]
+    ];
+    sheet.getRange(2, 1, defaultQuests.length, defaultQuests[0].length).setValues(defaultQuests);
+    console.log("Recovered quests sheet with default data.");
+  }
+  
+  return sheet;
+}
+
 // ==========================================
 // 📤 提出機能 (Submit)
 // ==========================================
@@ -116,16 +252,43 @@ function submitSlide(questId, questTitle) {
     
     const now = new Date();
     const timestamp = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy/MM/dd HH:mm:ss");
+    
+    // 1. スライド本体のコピー
     const newFileName = `${questTitle}_${userEmail}_${timestamp}`;
-    
     const newFile = sourceFile.makeCopy(newFileName, targetFolder);
-    // 確実に公開設定にする
     newFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    
     const newSlideId = newFile.getId();
-    const previewUrl = `https://docs.google.com/presentation/d/${newSlideId}/preview`;
+    
+    // 埋め込み用URL
+    const embedUrl = `https://docs.google.com/presentation/d/${newSlideId}/embed?start=false&loop=false&delayms=3000`;
 
-    // DB記録
+    // 2. サムネイル画像(PNG)の生成と保存
+    // スライドの1ページ目を取得
+    const slides = presentation.getSlides();
+    if (slides.length === 0) throw new Error('スライドが空です');
+    const firstPageId = slides[0].getObjectId();
+    
+    // サムネイル生成用URL (export/png)
+    // 注意: GASから自身のトークンでフェッチする
+    const exportUrl = `https://docs.google.com/presentation/d/${slideId}/export/png?id=${slideId}&pageid=${firstPageId}`;
+    const options = {
+      headers: {
+        Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
+      },
+      muteHttpExceptions: true
+    };
+    
+    const response = UrlFetchApp.fetch(exportUrl, options);
+    if (response.getResponseCode() !== 200) {
+      throw new Error('サムネイル生成に失敗しました: ' + response.getContentText());
+    }
+    
+    const blob = response.getBlob().setName(`${newFileName}.png`);
+    const thumbFile = targetFolder.createFile(blob);
+    thumbFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    const thumbFileId = thumbFile.getId();
+
+    // 3. DB記録
     const ss = SpreadsheetApp.openById(CONFIG.MASTER_SS_ID);
     const sheet = ss.getSheetByName('submissions');
     
@@ -134,15 +297,17 @@ function submitSlide(questId, questTitle) {
       userEmail,
       questId,
       newSlideId,
-      previewUrl,
+      embedUrl,
       presentation.getName(),
       0, 
-      "" 
+      "",
+      thumbFileId // 新規カラム
     ]);
 
     return { success: true };
 
   } catch (e) {
+    console.error(e);
     throw new Error(`提出失敗: ${e.toString()}`);
   }
 }
@@ -150,52 +315,87 @@ function submitSlide(questId, questTitle) {
 // ==========================================
 // 🖼️ ギャラリー取得
 // ==========================================
+// ==========================================
+// 🖼️ ギャラリー取得
+// ==========================================
 function getGalleryData() {
-  if (!CONFIG.MASTER_SS_ID) return [];
+  if (!CONFIG.MASTER_SS_ID) {
+    console.warn("MASTER_SS_ID not set");
+    return [];
+  }
 
   try {
     const ss = SpreadsheetApp.openById(CONFIG.MASTER_SS_ID);
     const sheet = ss.getSheetByName('submissions');
-    const data = sheet.getDataRange().getValues();
-    data.shift(); // ヘッダー除去
-    
-    // 最新20件
-    const recentData = data.filter(row => row[7] === "").reverse().slice(0, 20);
+    if (!sheet) {
+      console.warn("Submissions sheet not found");
+      return [];
+    }
 
-    return recentData.map((row) => {
-      let thumbBase64 = null;
-      try {
-        const file = DriveApp.getFileById(row[3]); // slideId
-        const blob = file.getThumbnail();
-        if (blob) {
-          thumbBase64 = Utilities.base64Encode(blob.getBytes());
-        }
-      } catch (e) {
-        // 画像取得エラー時はnullのままにする（クライアント側でダミー画像を表示）
-        console.warn('Thumb error for slide ' + row[3]);
+    // データ全取得
+    const data = sheet.getDataRange().getValues();
+    
+    // データがない（ヘッダーのみ含む）場合
+    if (data.length <= 1) {
+      console.log("No data in submissions sheet");
+      return [];
+    }
+    
+    // ヘッダー除去
+    data.shift(); 
+    
+    // インメモリでオブジェクト化（行番号を保持するため）
+    // 行番号は 2行目から始まるので index + 2
+    const allRows = data.map((row, index) => {
+      let thumbUrl = 'https://dummyimage.com/640x360/cccccc/ffffff&text=No+Image';
+      const thumbId = row[8]; // I列 (thumbnailFileId)
+      if (thumbId) {
+        // Google Drive image direct link (New format)
+        // Old: https://drive.google.com/uc?export=view&id=...
+        // New: https://lh3.googleusercontent.com/d/...
+        thumbUrl = `https://lh3.googleusercontent.com/d/${thumbId}`;
       }
 
       return {
-        rowIndex: findRowIndex(sheet, row[3]),
+        rowIndex: index + 2, // シート上の行番号
         timestamp: row[0],
+        userId: row[1],
         questId: row[2],
         slideId: row[3],
+        embedUrl: row[4],
         title: row[5],
         likes: row[6],
-        thumbnail: thumbBase64
+        deletedAt: row[7],
+        thumbnailUrl: thumbUrl
       };
     });
+
+    // フィルタリング（削除されていないもの）
+    // deletedAt が空、null、undefined、または 0 ("0"含む) の場合に表示
+    const activeRows = allRows.filter(item => {
+      const d = item.deletedAt;
+      // 緩い判定で 0 や "0" も許可
+      return !d || d == 0 || d === ""; 
+    });
+
+    console.log(`Initial Rows: ${allRows.length} -> Active: ${activeRows.length}`);
+
+    // 最新順にして20件取得
+    const recentItems = activeRows.reverse().slice(0, 20);
+    
+    // Explicitly stringify to ensure safe transport across google.script.run
+    // This handles Date objects and other quirks reliably
+    const jsonResponse = JSON.stringify(recentItems);
+    console.log(`Returning JSON: ${jsonResponse}`); // Log the actual return value
+
+    return jsonResponse;
+
   } catch (e) {
-    console.error(e);
-    return [];
+    console.error("getGalleryData Fatal Error:", e);
+    return "[]"; // Return empty array string on error
   }
 }
-
-function findRowIndex(sheet, slideId) {
-  const ids = sheet.getRange("D:D").getValues().flat();
-  const index = ids.indexOf(slideId);
-  return index !== -1 ? index + 1 : -1;
-}
+// findRowIndex function removed as it is no longer needed
 
 // ==========================================
 // ❤️ いいね機能
