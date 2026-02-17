@@ -1,0 +1,140 @@
+<style>
+  /* Google Fonts */
+  @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap');
+
+  :root {
+    --guild-yellow: #f1c40f;
+    --guild-orange: #f39c12;
+    --guild-blue: #3498db;
+    --guild-red: #e74c3c;
+    --guild-bg: #fdfbf7;
+    --guild-text: #2c3e50;
+    --card-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  }
+
+  body {
+    font-family: "Zen Maru Gothic", sans-serif;
+    background-color: var(--guild-bg);
+    color: var(--guild-text);
+  }
+
+  rt { font-size: 0.6em; color: #7f8c8d; }
+
+  /* Navbar */
+  .custom-navbar {
+    background-color: #ffffff;
+    border-bottom: 3px solid var(--guild-yellow);
+  }
+  .nav-pills .nav-link {
+    color: var(--guild-text);
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+  .nav-pills .nav-link.active {
+    background-color: var(--guild-yellow);
+    color: #fff;
+    box-shadow: 0 2px 4px rgba(241, 196, 15, 0.4);
+  }
+
+  /* Cards */
+  .quest-card {
+    border: none;
+    background: white;
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+    border-left: 6px solid #bdc3c7;
+    overflow: hidden;
+    transition: transform 0.2s;
+  }
+  .quest-card:hover { transform: translateY(-2px); }
+  .level-1 { border-left-color: var(--guild-blue); }
+  .level-2 { border-left-color: var(--guild-yellow); }
+  .level-3 { border-left-color: var(--guild-orange); }
+  .level-4 { border-left-color: var(--guild-red); }
+
+  .btn-quest {
+    background: linear-gradient(45deg, var(--guild-blue), #2980b9);
+    border: none;
+    color: white;
+    font-weight: bold;
+    box-shadow: 0 2px 5px rgba(52, 152, 219, 0.4);
+    transition: all 0.2s;
+  }
+  .btn-quest:hover { color: white; transform: scale(1.02); }
+
+  /* Gallery Image & Overlay */
+  .gallery-card {
+    border: none;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--card-shadow);
+    background: #fff;
+  }
+
+  .slide-container {
+    position: relative;
+    width: 100%;
+    padding-top: 56.25%; /* 16:9 */
+    background-color: #eee;
+    overflow: hidden;
+    cursor: pointer; /* クリックできることを示す */
+  }
+  
+  .slide-container img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s;
+  }
+
+  /* ホバー時のズームとアイコン表示 */
+  .slide-container:hover img {
+    transform: scale(1.05);
+  }
+  
+  .play-icon-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.5);
+    color: white;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .slide-container:hover .play-icon-overlay {
+    opacity: 1;
+    background: rgba(241, 196, 15, 0.9); /* 黄色に変化 */
+  }
+
+  /* Loading */
+  #loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+  }
+  
+  .btn-like-outline { color: var(--guild-red); border-color: var(--guild-red); }
+  .btn-like-active { background-color: var(--guild-red); color: white; border-color: var(--guild-red); }
+</style>
