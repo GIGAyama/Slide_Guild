@@ -1,0 +1,180 @@
+<script>
+  // 起動確認ログ
+  console.log("Slide Guild App Loaded");
+
+  // クエストデータ定義
+  var QUESTS = [
+    { id: "q1", title: "画像の召喚", desc: "「挿入」メニューから好きな画像を入れよう", level: 1 },
+    { id: "q2", title: "魔法の文字", desc: "ワードアートを使って、名前を派手に書こう", level: 1 },
+    { id: "q3", title: "動きの魔法", desc: "画像にアニメーションをつけて動かそう", level: 2 },
+    { id: "q4", title: "リンクの扉", desc: "クリックすると別のスライドに飛ぶボタンを作ろう", level: 3 }
+  ];
+
+  // 画面ロード時に実行
+  document.addEventListener('DOMContentLoaded', function() {
+    renderQuests();
+  });
+
+  // 画面切り替え関数 (修正: elを受け取る)
+  function switchView(el, viewId) {
+    // すべてのボタンからactiveを外す
+    var navs = document.querySelectorAll('.nav-link');
+    for (var i = 0; i < navs.length; i++) {
+      navs[i].classList.remove('active');
+    }
+    
+    // 押されたボタンにactiveをつける
+    if (el) {
+      el.classList.add('active');
+    }
+
+    // 画面切り替え
+    var sections = document.querySelectorAll('.view-section');
+    for (var k = 0; k < sections.length; k++) {
+      sections[k].classList.add('d-none');
+    }
+    
+    var target = document.getElementById(viewId);
+    if (target) {
+      target.classList.remove('d-none');
+    }
+
+    // ギャラリーならデータロード
+    if (viewId === 'gallery-view') {
+      loadGallery();
+    }
+  }
+
+  // クエスト一覧描画
+  function renderQuests() {
+    var container = document.getElementById('quest-list');
+    var html = '';
+
+    QUESTS.forEach(function(q) {
+      html += '<div class="card quest-card mb-3 level-' + q.level + '">';
+      html += '  <div class="card-body">';
+      html += '    <h6 class="card-title fw-bold">';
+      html += '      <span class="badge bg-secondary me-2 rounded-pill">Lv.' + q.level + '</span>';
+      html +=       q.title;
+      html += '    </h6>';
+      html += '    <p class="card-text small text-muted mb-3">' + q.desc + '</p>';
+      html += '    <button class="btn btn-quest btn-sm w-100 rounded-pill py-2" onclick="submitQuest(\'' + q.id + '\', \'' + q.title + '\')">';
+      html += '      <i class="bi bi-send-fill"></i> <ruby>提出<rt>ていしゅつ</rt></ruby>する';
+      html += '    </button>';
+      html += '  </div>';
+      html += '</div>';
+    });
+
+    container.innerHTML = html;
+  }
+
+  // 提出処理
+  function submitQuest(questId, title) {
+    Swal.fire({
+      title: '提出しますか？',
+      html: '<span class="fw-bold text-dark">' + title + '</span><br>として提出します。<br><small class="text-muted">※自動的にコピーが保存されます</small>',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#f1c40f',
+      cancelButtonColor: '#bdc3c7',
+      confirmButtonText: '<span style="color:#000; font-weight:bold">はい、提出！</span>',
+      cancelButtonText: 'やめる'
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        runGoogleScript('submitSlide', [questId, title], function(res) {
+          Swal.fire({
+            title: '大成功！',
+            text: 'クエストをクリアしました！',
+            icon: 'success',
+            confirmButtonColor: '#f1c40f',
+            timer: 2000,
+            showConfirmButton: false
+          });
+        });
+      }
+    });
+  }
+
+  // ギャラリー読み込み
+  function loadGallery() {
+    var container = document.getElementById('gallery-list');
+    container.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-grow text-warning" role="status"></div><p class="mt-2">読み込み中...</p></div>';
+
+    runGoogleScript('getGalleryData', [], function(data) {
+      if (!data || data.length === 0) {
+        container.innerHTML = '<div class="text-center py-5 text-muted">まだ提出がありません</div>';
+        return;
+      }
+
+      var html = '';
+      data.forEach(function(item) {
+        // 画像がない場合のダミー設定
+        var thumbSrc = item.thumbnail 
+          ? 'data:image/png;base64,' + item.thumbnail
+          : 'https://dummyimage.com/640x360/cccccc/ffffff&text=No+Image';
+        
+        var viewerUrl = 'https://docs.google.com/presentation/d/' + item.slideId + '/preview';
+        var dateStr = item.timestamp.toString().split(' ')[0];
+
+        html += '<div class="col-12 col-md-6">';
+        html += '  <div class="card gallery-card h-100">';
+        html += '    <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center pb-0">';
+        html += '      <span class="badge bg-light text-secondary border"><i class="bi bi-clock"></i> ' + dateStr + '</span>';
+        html += '    </div>';
+        html += '    <div class="card-body">';
+        html += '      <div class="slide-container rounded shadow-sm" onclick="window.open(\'' + viewerUrl + '\', \'_blank\')" title="クリックして見る">';
+        html += '        <img src="' + thumbSrc + '" alt="slide thumbnail">';
+        html += '        <div class="play-icon-overlay"><i class="bi bi-box-arrow-up-right"></i></div>';
+        html += '      </div>';
+        html += '      <div class="d-flex justify-content-between align-items-center mt-3">';
+        html += '         <small class="fw-bold text-truncate" style="max-width: 60%;">' + item.title + '</small>';
+        html += '         <button class="btn btn-like-outline btn-sm rounded-pill px-3" onclick="sendLike(this, ' + item.rowIndex + ')">';
+        html += '           <i class="bi bi-heart-fill"></i> <span class="like-count fw-bold">' + item.likes + '</span>';
+        html += '         </button>';
+        html += '      </div>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</div>';
+      });
+      
+      container.innerHTML = html;
+    });
+  }
+
+  // いいね機能
+  function sendLike(btn, rowIndex) {
+    var countSpan = btn.querySelector('.like-count');
+    var current = parseInt(countSpan.innerText);
+    countSpan.innerText = current + 1;
+    btn.classList.remove('btn-like-outline');
+    btn.classList.add('btn-like-active');
+    btn.disabled = true;
+
+    google.script.run
+      .withFailureHandler(function(e){ console.error(e); })
+      .addLike(rowIndex);
+  }
+
+  // GAS関数呼び出し共通処理
+  function runGoogleScript(funcName, args, onSuccess) {
+    var loading = document.getElementById('loading-overlay');
+    if(loading) loading.classList.remove('d-none');
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if(loading) loading.classList.add('d-none');
+        if (onSuccess) onSuccess(result);
+      })
+      .withFailureHandler(function(error) {
+        console.error("GAS Error:", error);
+        if(loading) loading.classList.add('d-none');
+        Swal.fire({
+          title: 'エラー',
+          text: '通信に失敗しました。',
+          icon: 'error',
+          confirmButtonColor: '#e74c3c'
+        });
+      })
+      [funcName](...args);
+  }
+</script>
